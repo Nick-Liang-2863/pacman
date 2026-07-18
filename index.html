@@ -19,7 +19,7 @@
 <script>
 (() => {
 'use strict';
-const C=document.querySelector('#game'),X=C.getContext('2d'),S=24,COLS=21,ROWS=23;
+const C=document.querySelector('#game'),X=C.getContext('2d'),S=24,COLS=21,ROWS=23,STEP=1/120,MAX_FRAME=.08,SNAP=3,HIT=S*.36;
 const raw=[
 '#####################',
 '#.........#.........#',
@@ -45,32 +45,34 @@ const raw=[
 '#.####.#######.####.#',
 '#####################'];
 const dirs={left:{x:-1,y:0,a:Math.PI},right:{x:1,y:0,a:0},up:{x:0,y:-1,a:-Math.PI/2},down:{x:0,y:1,a:Math.PI/2}},op={left:'right',right:'left',up:'down',down:'up'};
-let map,player,ghosts,score=0,level=1,lives=3,pellets=0,state='title',last=0,fright=0,modeClock=0,mode='scatter',audio;
+let map,player,ghosts,score=0,level=1,lives=3,pellets=0,state='title',last=0,acc=0,fright=0,modeClock=0,mode='scatter',audio;
 let high=+(localStorage.mazeMuncherHigh||0); document.querySelector('#high').textContent=pad(high);
 function pad(n){return String(n).padStart(6,'0')} function center(c){return c*S+S/2}
 function resetMap(){map=raw.map(r=>r.padEnd(COLS).split(''));pellets=0;for(const r of map)for(const v of r)if(v==='.'||v==='o')pellets++}
 function actor(x,y,d,s){return{x:center(x),y:center(y),d,want:d,s,spawn:{x:center(x),y:center(y)},dead:false}}
 function resetActors(){player=actor(10,16,'left',92+level*2);ghosts=[actor(9,10,'left',79),actor(10,10,'up',76),actor(11,10,'right',74),actor(10,12,'down',72)];ghosts.forEach((g,i)=>{g.color=['#ff4b57','#ff8ad8','#36e8f5','#ffae43'][i];g.i=i;g.release=i*1.4;g.eaten=false});fright=0}
-function start(newGame=true){if(newGame){score=0;level=1;lives=3}resetMap();resetActors();state='ready';mode='scatter';modeClock=0;setTimeout(()=>{if(state==='ready')state='play'},900);hud();beep(260,.06)}
+function start(newGame=true){if(newGame){score=0;level=1;lives=3}resetMap();resetActors();state='ready';mode='scatter';modeClock=0;acc=0;setTimeout(()=>{if(state==='ready')state='play'},900);hud();beep(260,.06)}
 function hud(){document.querySelector('#score').textContent=pad(score);document.querySelector('#level').textContent=level;if(score>high){high=score;localStorage.mazeMuncherHigh=high;document.querySelector('#high').textContent=pad(high)}}
 function tile(a){return{x:Math.floor(a.x/S),y:Math.floor(a.y/S)}} function wall(x,y,ghost=false){if(y<0||y>=ROWS)return true;if(x<0||x>=COLS)return false;const q=map[y][x];return q==='#'||(!ghost&&q==='-')}
-function aligned(a){return Math.abs((a.x-S/2)%S)<2.3&&Math.abs((a.y-S/2)%S)<2.3}
-function can(a,d,ghost=false){const t=tile(a),v=dirs[d];return !wall(t.x+v.x,t.y+v.y,ghost)}
-function move(a,dt,ghost=false){if(aligned(a)){const t=tile(a);a.x=center(t.x);a.y=center(t.y);if(can(a,a.want,ghost))a.d=a.want;if(!can(a,a.d,ghost))return}const v=dirs[a.d];a.x+=v.x*a.s*dt;a.y+=v.y*a.s*dt;if(a.x<-S/2)a.x=C.width+S/2;if(a.x>C.width+S/2)a.x=-S/2}
+function aligned(a){return Math.abs(a.x-center(tile(a).x))<SNAP&&Math.abs(a.y-center(tile(a).y))<SNAP}
+function canAt(x,y,d,ghost=false){const v=dirs[d],pad=HIT-1;if(v.x){const edge=x+v.x*HIT,tx=Math.floor(edge/S),ty1=Math.floor((y-pad)/S),ty2=Math.floor((y+pad)/S);return !wall(tx,ty1,ghost)&&!wall(tx,ty2,ghost)}const edge=y+v.y*HIT,ty=Math.floor(edge/S),tx1=Math.floor((x-pad)/S),tx2=Math.floor((x+pad)/S);return !wall(tx1,ty,ghost)&&!wall(tx2,ty,ghost)}
+function can(a,d,ghost=false){return canAt(a.x,a.y,d,ghost)}
+function snapAxis(a,d){const t=tile(a);if(d==='left'||d==='right'){const cy=center(t.y);if(Math.abs(a.y-cy)<SNAP)a.y=cy}else{const cx=center(t.x);if(Math.abs(a.x-cx)<SNAP)a.x=cx}}
+function move(a,dt,ghost=false){const tryTurn=()=>{snapAxis(a,a.want);if(can(a,a.want,ghost))a.d=a.want};if(a.want===op[a.d])a.d=a.want;tryTurn();snapAxis(a,a.d);if(!can(a,a.d,ghost))return;const v=dirs[a.d],dist=a.s*dt,steps=Math.max(1,Math.ceil(dist/3)),slice=dist/steps;for(let i=0;i<steps;i++){if(!can(a,a.d,ghost)){snapAxis(a,a.d);break}a.x+=v.x*slice;a.y+=v.y*slice;if(a.x<-S/2){a.x=C.width+S/2;continue}if(a.x>C.width+S/2){a.x=-S/2;continue}if(!can(a,a.d,ghost)){a.x-=v.x*slice;a.y-=v.y*slice;snapAxis(a,a.d);break}tryTurn()}}
 function target(g){if(fright>0)return{x:Math.random()*COLS,y:Math.random()*ROWS};if(mode==='scatter')return [{x:COLS-2,y:0},{x:1,y:0},{x:COLS-2,y:ROWS-1},{x:1,y:ROWS-1}][g.i];let p=tile(player),v=dirs[player.d];if(g.i===0)return p;if(g.i===1)return{x:p.x+v.x*4,y:p.y+v.y*4};if(g.i===2){let b=tile(ghosts[0]);return{x:2*(p.x+v.x*2)-b.x,y:2*(p.y+v.y*2)-b.y}}return Math.hypot(g.x-player.x,g.y-player.y)>S*7?p:{x:1,y:ROWS-1}}
-function steer(g){if(!aligned(g))return;const options=Object.keys(dirs).filter(d=>d!==op[g.d]&&can(g,d,true));if(!options.length){g.want=op[g.d];return}const q=target(g);options.sort((a,b)=>{const A=dirs[a],B=dirs[b],t=tile(g);return Math.hypot(t.x+A.x-q.x,t.y+A.y-q.y)-Math.hypot(t.x+B.x-q.x,t.y+B.y-q.y)});g.want=options[0]}
+function steer(g){if(!aligned(g))return;const t=tile(g);g.x=center(t.x);g.y=center(t.y);const options=Object.keys(dirs).filter(d=>d!==op[g.d]&&can(g,d,true));if(!options.length){g.want=op[g.d];return}const q=target(g);options.sort((a,b)=>{const A=dirs[a],B=dirs[b];return Math.hypot(t.x+A.x-q.x,t.y+A.y-q.y)-Math.hypot(t.x+B.x-q.x,t.y+B.y-q.y)});g.want=options[0]}
 function eat(){let t=tile(player);if(!map[t.y]||!map[t.y][t.x])return;const q=map[t.y][t.x];if(q==='.'||q==='o'){map[t.y][t.x]=' ';pellets--;add(q==='o'?50:10);beep(q==='o'?420:180,.025);if(q==='o'){fright=7;ghosts.forEach(g=>g.eaten=false)}if(!pellets){state='clear';add(500);setTimeout(()=>{level++;resetMap();resetActors();state='play';hud()},1100)}}}
 function add(n){score+=n;hud()}
 function collision(){for(const g of ghosts)if(Math.hypot(g.x-player.x,g.y-player.y)<S*.72){if(fright>0&&!g.eaten){g.eaten=true;g.x=g.spawn.x;g.y=g.spawn.y;g.d='up';add(200);beep(700,.15)}else if(!g.eaten){state='dead';lives--;beep(95,.5);setTimeout(()=>{if(lives<0)state='gameover';else{resetActors();state='ready';setTimeout(()=>{if(state==='ready')state='play'},700)}},900);break}}}
 function update(dt){if(state!=='play')return;modeClock+=dt;if(modeClock>8){modeClock=0;mode=mode==='scatter'?'chase':'scatter';ghosts.forEach(g=>g.want=op[g.d])}fright=Math.max(0,fright-dt);move(player,dt);eat();ghosts.forEach(g=>{g.release-=dt;if(g.release<=0){steer(g);g.s=(fright>0&&!g.eaten?58:76+level*2);move(g,dt,true)}});collision()}
 function rounded(x,y,w,h,r){X.beginPath();X.roundRect(x,y,w,h,r);X.stroke()}
-function drawMaze(){X.fillStyle='#02030a';X.fillRect(0,0,C.width,C.height);X.lineWidth=3;X.strokeStyle='#3257ff';X.shadowColor='#224cff';X.shadowBlur=5;for(let y=0;y<ROWS;y++)for(let x=0;x<COLS;x++)if(map[y][x]==='#'){const px=x*S,py=y*S;rounded(px+2,py+2,S-4,S-4,5)}X.shadowBlur=0;for(let y=0;y<ROWS;y++)for(let x=0;x<COLS;x++){const q=map[y][x],cx=center(x),cy=center(y);if(q==='.'){X.fillStyle='#ffe6a6';X.beginPath();X.arc(cx,cy,2.5,0,7);X.fill()}else if(q==='o'){X.fillStyle='#fff4c7';X.beginPath();X.arc(cx,cy,6+Math.sin(performance.now()/120),0,7);X.fill()}}}
+function drawMaze(){X.fillStyle='#02030a';X.fillRect(0,0,C.width,C.height);X.lineWidth=3;X.strokeStyle='#3257ff';X.shadowColor='#224cff';X.shadowBlur=2;for(let y=0;y<ROWS;y++)for(let x=0;x<COLS;x++)if(map[y][x]==='#'){const px=x*S,py=y*S;rounded(px+2,py+2,S-4,S-4,5)}X.shadowBlur=0;for(let y=0;y<ROWS;y++)for(let x=0;x<COLS;x++){const q=map[y][x],cx=center(x),cy=center(y);if(q==='.'){X.fillStyle='#ffe6a6';X.beginPath();X.arc(cx,cy,2.5,0,7);X.fill()}else if(q==='o'){X.fillStyle='#fff4c7';X.beginPath();X.arc(cx,cy,6+Math.sin(performance.now()/120),0,7);X.fill()}}}
 function drawPlayer(){const a=dirs[player.d].a,m=.18+.18*Math.abs(Math.sin(performance.now()/85));X.fillStyle='#ffe23b';X.beginPath();X.moveTo(player.x,player.y);X.arc(player.x,player.y,S*.43,a+m,a+Math.PI*2-m);X.closePath();X.fill()}
 function drawGhost(g){const x=g.x,y=g.y,r=S*.42;if(g.eaten){eyes(x,y,g);return}X.fillStyle=fright>0?(fright<2&&Math.floor(fright*7)%2?'#fff':'#244cff'):g.color;X.beginPath();X.arc(x,y-r*.05,r,Math.PI,0);X.lineTo(x+r,y+r);for(let i=3;i>=-3;i--)X.lineTo(x+i*r/3,y+r-(i%2?0:r*.3));X.closePath();X.fill();eyes(x,y,g)}
 function eyes(x,y,g){const v=dirs[g.d];for(const z of [-1,1]){X.fillStyle='white';X.beginPath();X.ellipse(x+z*5,y-3,4.7,6,0,0,7);X.fill();X.fillStyle='#14247c';X.beginPath();X.arc(x+z*5+v.x*2,y-3+v.y*2,2.2,0,7);X.fill()}}
 function overlay(title,sub){X.fillStyle='#000b';X.fillRect(35,210,C.width-70,126);X.textAlign='center';X.fillStyle='#ffe23b';X.font='900 34px system-ui';X.fillText(title,C.width/2,258);X.fillStyle='#dbe2ff';X.font='600 15px system-ui';X.fillText(sub,C.width/2,292)}
 function draw(){drawMaze();if(player)drawPlayer();if(ghosts)ghosts.forEach(drawGhost);X.textAlign='left';X.fillStyle='#ffe23b';X.font='20px system-ui';X.fillText('●'.repeat(Math.max(0,lives)),8,C.height-8);if(state==='title')overlay('MAZE MUNCHER','Press Enter or tap to start');if(state==='ready')overlay('READY!','');if(state==='paused')overlay('PAUSED','Press P to continue');if(state==='gameover')overlay('GAME OVER','Press Enter to play again');if(state==='clear')overlay('MAZE CLEARED!','')}
-function loop(t){let dt=Math.min(.035,(t-last)/1000||0);last=t;update(dt);draw();requestAnimationFrame(loop)}
+function loop(t){const frame=Math.min(MAX_FRAME,(t-last)/1000||0);last=t;acc+=frame;while(acc>=STEP){update(STEP);acc-=STEP}draw();requestAnimationFrame(loop)}
 function input(d){if(state==='title'||state==='gameover'){start(true);return}if(state==='paused')return;player.want=d;beep(320,.02)}
 addEventListener('keydown',e=>{const k={ArrowLeft:'left',a:'left',A:'left',ArrowRight:'right',d:'right',D:'right',ArrowUp:'up',w:'up',W:'up',ArrowDown:'down',s:'down',S:'down'}[e.key];if(k){e.preventDefault();input(k)}if(e.key==='Enter'&&(state==='title'||state==='gameover'))start(true);if(e.key.toLowerCase()==='p'){state=state==='play'?'paused':state==='paused'?'play':state}});
 document.querySelectorAll('.pad button').forEach(b=>b.addEventListener('pointerdown',e=>{e.preventDefault();input(b.dataset.d)}));C.addEventListener('pointerdown',()=>{if(state==='title'||state==='gameover')start(true)});
