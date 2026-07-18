@@ -19,7 +19,7 @@
 <script>
 (() => {
 'use strict';
-const C=document.querySelector('#game'),X=C.getContext('2d'),S=24,COLS=21,ROWS=23,STEP=1/120,MAX_FRAME=.08,SNAP=3,HIT=S*.36;
+const C=document.querySelector('#game'),X=C.getContext('2d'),S=24,COLS=21,ROWS=23,STEP=1/120,MAX_FRAME=.08,SNAP=3,RADIUS=S*.41;
 const raw=[
 '#####################',
 '#.........#.........#',
@@ -53,14 +53,16 @@ function actor(x,y,d,s){return{x:center(x),y:center(y),d,want:d,s,spawn:{x:cente
 function resetActors(){player=actor(10,16,'left',92+level*2);ghosts=[actor(9,10,'left',79),actor(10,10,'up',76),actor(11,10,'right',74),actor(10,12,'down',72)];ghosts.forEach((g,i)=>{g.color=['#ff4b57','#ff8ad8','#36e8f5','#ffae43'][i];g.i=i;g.release=i*1.4;g.eaten=false});fright=0}
 function start(newGame=true){if(newGame){score=0;level=1;lives=3}resetMap();resetActors();state='ready';mode='scatter';modeClock=0;acc=0;setTimeout(()=>{if(state==='ready')state='play'},900);hud();beep(260,.06)}
 function hud(){document.querySelector('#score').textContent=pad(score);document.querySelector('#level').textContent=level;if(score>high){high=score;localStorage.mazeMuncherHigh=high;document.querySelector('#high').textContent=pad(high)}}
-function tile(a){return{x:Math.floor(a.x/S),y:Math.floor(a.y/S)}} function wall(x,y,ghost=false){if(y<0||y>=ROWS)return true;if(x<0||x>=COLS)return false;const q=map[y][x];return q==='#'||(!ghost&&q==='-')}
-function aligned(a){return Math.abs(a.x-center(tile(a).x))<SNAP&&Math.abs(a.y-center(tile(a).y))<SNAP}
-function canAt(x,y,d,ghost=false){const v=dirs[d],pad=HIT-1;if(v.x){const edge=x+v.x*HIT,tx=Math.floor(edge/S),ty1=Math.floor((y-pad)/S),ty2=Math.floor((y+pad)/S);return !wall(tx,ty1,ghost)&&!wall(tx,ty2,ghost)}const edge=y+v.y*HIT,ty=Math.floor(edge/S),tx1=Math.floor((x-pad)/S),tx2=Math.floor((x+pad)/S);return !wall(tx1,ty,ghost)&&!wall(tx2,ty,ghost)}
-function can(a,d,ghost=false){return canAt(a.x,a.y,d,ghost)}
-function snapAxis(a,d){const t=tile(a);if(d==='left'||d==='right'){const cy=center(t.y);if(Math.abs(a.y-cy)<SNAP)a.y=cy}else{const cx=center(t.x);if(Math.abs(a.x-cx)<SNAP)a.x=cx}}
-function move(a,dt,ghost=false){const tryTurn=()=>{snapAxis(a,a.want);if(can(a,a.want,ghost))a.d=a.want};if(a.want===op[a.d])a.d=a.want;tryTurn();snapAxis(a,a.d);if(!can(a,a.d,ghost))return;const v=dirs[a.d],dist=a.s*dt,steps=Math.max(1,Math.ceil(dist/3)),slice=dist/steps;for(let i=0;i<steps;i++){if(!can(a,a.d,ghost)){snapAxis(a,a.d);break}a.x+=v.x*slice;a.y+=v.y*slice;if(a.x<-S/2){a.x=C.width+S/2;continue}if(a.x>C.width+S/2){a.x=-S/2;continue}if(!can(a,a.d,ghost)){a.x-=v.x*slice;a.y-=v.y*slice;snapAxis(a,a.d);break}tryTurn()}}
+function tile(a){return{x:Math.floor(a.x/S),y:Math.floor(a.y/S)}} function grid(a){return{x:Math.round((a.x-S/2)/S),y:Math.round((a.y-S/2)/S)}} function wall(x,y,ghost=false){if(y<0||y>=ROWS)return true;if(x<0||x>=COLS)return false;const q=map[y][x];return q==='#'||(!ghost&&q==='-')}
+function aligned(a){const t=grid(a);return Math.abs(a.x-center(t.x))<=SNAP&&Math.abs(a.y-center(t.y))<=SNAP}
+function snap(a){const t=grid(a);a.x=center(t.x);a.y=center(t.y);return t}
+function open(t,d,ghost=false){const v=dirs[d];return !wall(t.x+v.x,t.y+v.y,ghost)}
+function canAt(x,y,d,ghost=false){const v=dirs[d],side=RADIUS-1;if(v.x){const edge=x+v.x*RADIUS,tx=Math.floor(edge/S),ty1=Math.floor((y-side)/S),ty2=Math.floor((y+side)/S);return !wall(tx,ty1,ghost)&&!wall(tx,ty2,ghost)}const edge=y+v.y*RADIUS,ty=Math.floor(edge/S),tx1=Math.floor((x-side)/S),tx2=Math.floor((x+side)/S);return !wall(tx1,ty,ghost)&&!wall(tx2,ty,ghost)}
+function choose(a,ghost=false){const t=snap(a);if(a.want===op[a.d]){a.d=a.want;return}if(a.want!==a.d&&open(t,a.want,ghost))a.d=a.want}
+function wrap(a){if(a.x<=-S/2)a.x=center(COLS);else if(a.x>=C.width+S/2)a.x=center(-1)}
+function move(a,dt,ghost=false){if(a.want===op[a.d])a.d=a.want;let remain=a.s*dt;while(remain>.001){let t;if(aligned(a)){t=snap(a);choose(a,ghost);if(!open(t,a.d,ghost))return}else t=grid(a);const v=dirs[a.d],axis=v.x?a.x:a.y,atCenter=aligned(a);const index=atCenter?(v.x?t.x+v.x:t.y+v.y):(v.x?(v.x>0?Math.ceil((a.x-S/2)/S):Math.floor((a.x-S/2)/S)):(v.y>0?Math.ceil((a.y-S/2)/S):Math.floor((a.y-S/2)/S)));const target=center(index),distance=Math.abs(target-axis),step=Math.min(remain,distance);if(distance<.001){snap(a);continue}const nx=a.x+v.x*step,ny=a.y+v.y*step;if(!canAt(nx,ny,a.d,ghost)){snap(a);return}a.x=nx;a.y=ny;remain-=step;if(step===distance){if(v.x)a.x=target;else a.y=target;wrap(a)}}}
 function target(g){if(fright>0)return{x:Math.random()*COLS,y:Math.random()*ROWS};if(mode==='scatter')return [{x:COLS-2,y:0},{x:1,y:0},{x:COLS-2,y:ROWS-1},{x:1,y:ROWS-1}][g.i];let p=tile(player),v=dirs[player.d];if(g.i===0)return p;if(g.i===1)return{x:p.x+v.x*4,y:p.y+v.y*4};if(g.i===2){let b=tile(ghosts[0]);return{x:2*(p.x+v.x*2)-b.x,y:2*(p.y+v.y*2)-b.y}}return Math.hypot(g.x-player.x,g.y-player.y)>S*7?p:{x:1,y:ROWS-1}}
-function steer(g){if(!aligned(g))return;const t=tile(g);g.x=center(t.x);g.y=center(t.y);const options=Object.keys(dirs).filter(d=>d!==op[g.d]&&can(g,d,true));if(!options.length){g.want=op[g.d];return}const q=target(g);options.sort((a,b)=>{const A=dirs[a],B=dirs[b];return Math.hypot(t.x+A.x-q.x,t.y+A.y-q.y)-Math.hypot(t.x+B.x-q.x,t.y+B.y-q.y)});g.want=options[0]}
+function steer(g){if(!aligned(g))return;const t=snap(g);let options=Object.keys(dirs).filter(d=>d!==op[g.d]&&open(t,d,true));if(!options.length)options=Object.keys(dirs).filter(d=>open(t,d,true));if(!options.length)return;const q=target(g);options.sort((a,b)=>{const A=dirs[a],B=dirs[b];return Math.hypot(t.x+A.x-q.x,t.y+A.y-q.y)-Math.hypot(t.x+B.x-q.x,t.y+B.y-q.y)});g.want=options[0]}
 function eat(){let t=tile(player);if(!map[t.y]||!map[t.y][t.x])return;const q=map[t.y][t.x];if(q==='.'||q==='o'){map[t.y][t.x]=' ';pellets--;add(q==='o'?50:10);beep(q==='o'?420:180,.025);if(q==='o'){fright=7;ghosts.forEach(g=>g.eaten=false)}if(!pellets){state='clear';add(500);setTimeout(()=>{level++;resetMap();resetActors();state='play';hud()},1100)}}}
 function add(n){score+=n;hud()}
 function collision(){for(const g of ghosts)if(Math.hypot(g.x-player.x,g.y-player.y)<S*.72){if(fright>0&&!g.eaten){g.eaten=true;g.x=g.spawn.x;g.y=g.spawn.y;g.d='up';add(200);beep(700,.15)}else if(!g.eaten){state='dead';lives--;beep(95,.5);setTimeout(()=>{if(lives<0)state='gameover';else{resetActors();state='ready';setTimeout(()=>{if(state==='ready')state='play'},700)}},900);break}}}
