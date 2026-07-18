@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Maze Muncher</title>
+<style>
+  :root{color-scheme:dark}*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;background:radial-gradient(circle at 50% 30%,#101537,#02030d 65%);font-family:system-ui,sans-serif;color:#f8f8ff;overflow:hidden}
+  main{text-align:center;user-select:none}.bar{display:flex;justify-content:space-between;align-items:end;width:min(92vw,560px);margin:0 auto 8px;font-weight:800;letter-spacing:.08em}.bar span{color:#ffe447}.sub{font-size:12px;color:#9ba6cc;font-weight:600}
+  canvas{display:block;background:#02030a;border:2px solid #1e2d72;border-radius:10px;box-shadow:0 0 40px #2754ff33;max-width:92vw;max-height:79vh;image-rendering:auto}
+  .help{margin-top:8px;color:#8e99be;font-size:12px}.pad{display:none;margin:9px auto 0;grid-template:repeat(2,42px)/repeat(3,48px);width:max-content;gap:4px}.pad button{border:1px solid #354583;border-radius:8px;background:#101944;color:white;font-size:22px}.pad [data-d=up]{grid-column:2}.pad [data-d=left]{grid-row:2;grid-column:1}.pad [data-d=down]{grid-row:2;grid-column:2}.pad [data-d=right]{grid-row:2;grid-column:3}@media(pointer:coarse){.pad{display:grid}.help{display:none}}
+</style>
+</head>
+<body><main>
+  <div class="bar"><div>SCORE <span id="score">000000</span></div><div class="sub">HIGH <span id="high">000000</span></div><div>LEVEL <span id="level">1</span></div></div>
+  <canvas id="game" width="504" height="552" aria-label="Maze chase game"></canvas>
+  <div class="help">Arrow keys / WASD to move · P to pause · Enter to start</div>
+  <div class="pad"><button data-d="up">▲</button><button data-d="left">◀</button><button data-d="down">▼</button><button data-d="right">▶</button></div>
+</main>
+<script>
+(() => {
+'use strict';
+const C=document.querySelector('#game'),X=C.getContext('2d'),S=24,COLS=21,ROWS=23;
+const raw=[
+'#####################',
+'#.........#.........#',
+'#.###.###.#.###.###.#',
+'#o###.###.#.###.###o#',
+'#...................#',
+'#.###.#.#####.#.###.#',
+'#.....#...#...#.....#',
+'#####.### # ###.#####',
+'    #.#       #.#    ',
+'#####.# ##-## #.#####',
+'     .  #   #  .     ',
+'#####.# ##### #.#####',
+'    #.#       #.#    ',
+'#####.# ##### #.#####',
+'#.........#.........#',
+'#.###.###.#.###.###.#',
+'#o..#.....P.....#..o#',
+'###.#.#.#####.#.#.###',
+'#.....#...#...#.....#',
+'#.#######.#.#######.#',
+'#...................#',
+'#.####.#######.####.#',
+'#####################'];
+const dirs={left:{x:-1,y:0,a:Math.PI},right:{x:1,y:0,a:0},up:{x:0,y:-1,a:-Math.PI/2},down:{x:0,y:1,a:Math.PI/2}},op={left:'right',right:'left',up:'down',down:'up'};
+let map,player,ghosts,score=0,level=1,lives=3,pellets=0,state='title',last=0,fright=0,modeClock=0,mode='scatter',audio;
+let high=+(localStorage.mazeMuncherHigh||0); document.querySelector('#high').textContent=pad(high);
+function pad(n){return String(n).padStart(6,'0')} function center(c){return c*S+S/2}
+function resetMap(){map=raw.map(r=>r.padEnd(COLS).split(''));pellets=0;for(const r of map)for(const v of r)if(v==='.'||v==='o')pellets++}
+function actor(x,y,d,s){return{x:center(x),y:center(y),d,want:d,s,spawn:{x:center(x),y:center(y)},dead:false}}
+function resetActors(){player=actor(10,16,'left',92+level*2);ghosts=[actor(9,10,'left',79),actor(10,10,'up',76),actor(11,10,'right',74),actor(10,12,'down',72)];ghosts.forEach((g,i)=>{g.color=['#ff4b57','#ff8ad8','#36e8f5','#ffae43'][i];g.i=i;g.release=i*1.4;g.eaten=false});fright=0}
+function start(newGame=true){if(newGame){score=0;level=1;lives=3}resetMap();resetActors();state='ready';mode='scatter';modeClock=0;setTimeout(()=>{if(state==='ready')state='play'},900);hud();beep(260,.06)}
+function hud(){document.querySelector('#score').textContent=pad(score);document.querySelector('#level').textContent=level;if(score>high){high=score;localStorage.mazeMuncherHigh=high;document.querySelector('#high').textContent=pad(high)}}
+function tile(a){return{x:Math.floor(a.x/S),y:Math.floor(a.y/S)}} function wall(x,y,ghost=false){if(y<0||y>=ROWS)return true;if(x<0||x>=COLS)return false;const q=map[y][x];return q==='#'||(!ghost&&q==='-')}
+function aligned(a){return Math.abs((a.x-S/2)%S)<2.3&&Math.abs((a.y-S/2)%S)<2.3}
+function can(a,d,ghost=false){const t=tile(a),v=dirs[d];return !wall(t.x+v.x,t.y+v.y,ghost)}
+function move(a,dt,ghost=false){if(aligned(a)){const t=tile(a);a.x=center(t.x);a.y=center(t.y);if(can(a,a.want,ghost))a.d=a.want;if(!can(a,a.d,ghost))return}const v=dirs[a.d];a.x+=v.x*a.s*dt;a.y+=v.y*a.s*dt;if(a.x<-S/2)a.x=C.width+S/2;if(a.x>C.width+S/2)a.x=-S/2}
+function target(g){if(fright>0)return{x:Math.random()*COLS,y:Math.random()*ROWS};if(mode==='scatter')return [{x:COLS-2,y:0},{x:1,y:0},{x:COLS-2,y:ROWS-1},{x:1,y:ROWS-1}][g.i];let p=tile(player),v=dirs[player.d];if(g.i===0)return p;if(g.i===1)return{x:p.x+v.x*4,y:p.y+v.y*4};if(g.i===2){let b=tile(ghosts[0]);return{x:2*(p.x+v.x*2)-b.x,y:2*(p.y+v.y*2)-b.y}}return Math.hypot(g.x-player.x,g.y-player.y)>S*7?p:{x:1,y:ROWS-1}}
+function steer(g){if(!aligned(g))return;const options=Object.keys(dirs).filter(d=>d!==op[g.d]&&can(g,d,true));if(!options.length){g.want=op[g.d];return}const q=target(g);options.sort((a,b)=>{const A=dirs[a],B=dirs[b],t=tile(g);return Math.hypot(t.x+A.x-q.x,t.y+A.y-q.y)-Math.hypot(t.x+B.x-q.x,t.y+B.y-q.y)});g.want=options[0]}
+function eat(){let t=tile(player);if(!map[t.y]||!map[t.y][t.x])return;const q=map[t.y][t.x];if(q==='.'||q==='o'){map[t.y][t.x]=' ';pellets--;add(q==='o'?50:10);beep(q==='o'?420:180,.025);if(q==='o'){fright=7;ghosts.forEach(g=>g.eaten=false)}if(!pellets){state='clear';add(500);setTimeout(()=>{level++;resetMap();resetActors();state='play';hud()},1100)}}}
+function add(n){score+=n;hud()}
+function collision(){for(const g of ghosts)if(Math.hypot(g.x-player.x,g.y-player.y)<S*.72){if(fright>0&&!g.eaten){g.eaten=true;g.x=g.spawn.x;g.y=g.spawn.y;g.d='up';add(200);beep(700,.15)}else if(!g.eaten){state='dead';lives--;beep(95,.5);setTimeout(()=>{if(lives<0)state='gameover';else{resetActors();state='ready';setTimeout(()=>{if(state==='ready')state='play'},700)}},900);break}}}
+function update(dt){if(state!=='play')return;modeClock+=dt;if(modeClock>8){modeClock=0;mode=mode==='scatter'?'chase':'scatter';ghosts.forEach(g=>g.want=op[g.d])}fright=Math.max(0,fright-dt);move(player,dt);eat();ghosts.forEach(g=>{g.release-=dt;if(g.release<=0){steer(g);g.s=(fright>0&&!g.eaten?58:76+level*2);move(g,dt,true)}});collision()}
+function rounded(x,y,w,h,r){X.beginPath();X.roundRect(x,y,w,h,r);X.stroke()}
+function drawMaze(){X.fillStyle='#02030a';X.fillRect(0,0,C.width,C.height);X.lineWidth=3;X.strokeStyle='#3257ff';X.shadowColor='#224cff';X.shadowBlur=5;for(let y=0;y<ROWS;y++)for(let x=0;x<COLS;x++)if(map[y][x]==='#'){const px=x*S,py=y*S;rounded(px+2,py+2,S-4,S-4,5)}X.shadowBlur=0;for(let y=0;y<ROWS;y++)for(let x=0;x<COLS;x++){const q=map[y][x],cx=center(x),cy=center(y);if(q==='.'){X.fillStyle='#ffe6a6';X.beginPath();X.arc(cx,cy,2.5,0,7);X.fill()}else if(q==='o'){X.fillStyle='#fff4c7';X.beginPath();X.arc(cx,cy,6+Math.sin(performance.now()/120),0,7);X.fill()}}}
+function drawPlayer(){const a=dirs[player.d].a,m=.18+.18*Math.abs(Math.sin(performance.now()/85));X.fillStyle='#ffe23b';X.beginPath();X.moveTo(player.x,player.y);X.arc(player.x,player.y,S*.43,a+m,a+Math.PI*2-m);X.closePath();X.fill()}
+function drawGhost(g){const x=g.x,y=g.y,r=S*.42;if(g.eaten){eyes(x,y,g);return}X.fillStyle=fright>0?(fright<2&&Math.floor(fright*7)%2?'#fff':'#244cff'):g.color;X.beginPath();X.arc(x,y-r*.05,r,Math.PI,0);X.lineTo(x+r,y+r);for(let i=3;i>=-3;i--)X.lineTo(x+i*r/3,y+r-(i%2?0:r*.3));X.closePath();X.fill();eyes(x,y,g)}
+function eyes(x,y,g){const v=dirs[g.d];for(const z of [-1,1]){X.fillStyle='white';X.beginPath();X.ellipse(x+z*5,y-3,4.7,6,0,0,7);X.fill();X.fillStyle='#14247c';X.beginPath();X.arc(x+z*5+v.x*2,y-3+v.y*2,2.2,0,7);X.fill()}}
+function overlay(title,sub){X.fillStyle='#000b';X.fillRect(35,210,C.width-70,126);X.textAlign='center';X.fillStyle='#ffe23b';X.font='900 34px system-ui';X.fillText(title,C.width/2,258);X.fillStyle='#dbe2ff';X.font='600 15px system-ui';X.fillText(sub,C.width/2,292)}
+function draw(){drawMaze();if(player)drawPlayer();if(ghosts)ghosts.forEach(drawGhost);X.textAlign='left';X.fillStyle='#ffe23b';X.font='20px system-ui';X.fillText('●'.repeat(Math.max(0,lives)),8,C.height-8);if(state==='title')overlay('MAZE MUNCHER','Press Enter or tap to start');if(state==='ready')overlay('READY!','');if(state==='paused')overlay('PAUSED','Press P to continue');if(state==='gameover')overlay('GAME OVER','Press Enter to play again');if(state==='clear')overlay('MAZE CLEARED!','')}
+function loop(t){let dt=Math.min(.035,(t-last)/1000||0);last=t;update(dt);draw();requestAnimationFrame(loop)}
+function input(d){if(state==='title'||state==='gameover'){start(true);return}if(state==='paused')return;player.want=d;beep(320,.02)}
+addEventListener('keydown',e=>{const k={ArrowLeft:'left',a:'left',A:'left',ArrowRight:'right',d:'right',D:'right',ArrowUp:'up',w:'up',W:'up',ArrowDown:'down',s:'down',S:'down'}[e.key];if(k){e.preventDefault();input(k)}if(e.key==='Enter'&&(state==='title'||state==='gameover'))start(true);if(e.key.toLowerCase()==='p'){state=state==='play'?'paused':state==='paused'?'play':state}});
+document.querySelectorAll('.pad button').forEach(b=>b.addEventListener('pointerdown',e=>{e.preventDefault();input(b.dataset.d)}));C.addEventListener('pointerdown',()=>{if(state==='title'||state==='gameover')start(true)});
+function beep(f,d){try{audio??=new AudioContext;const o=audio.createOscillator(),g=audio.createGain();o.type='square';o.frequency.value=f;g.gain.setValueAtTime(.025,audio.currentTime);g.gain.exponentialRampToValueAtTime(.0001,audio.currentTime+d);o.connect(g).connect(audio.destination);o.start();o.stop(audio.currentTime+d)}catch{}}
+resetMap();resetActors();requestAnimationFrame(loop);
+})();
+</script></body></html>
